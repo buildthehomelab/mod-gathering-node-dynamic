@@ -167,10 +167,14 @@ void ApplyPoolLimits()
 
     // Never go past the number of spawn points the pool actually has.
     std::string limitExpression =
-        "LEAST(c.spawn_points, GREATEST(b.original_max_limit, ROUND(b.original_max_limit * " + std::to_string(g_poolMultiplier) + ")))";
+        "LEAST(c.spawn_points, ROUND(b.original_max_limit * " + std::to_string(g_poolMultiplier) + "))";
 
     if (g_poolMaxLimitCap)
         limitExpression = "LEAST(" + std::to_string(g_poolMaxLimitCap) + ", " + limitExpression + ")";
+
+    // A pool that already spawns more than the cap, such as the Alterac Valley
+    // one, keeps its stock limit: this feature only ever adds nodes.
+    limitExpression = "GREATEST(b.original_max_limit, " + limitExpression + ")";
 
     WorldDatabase.DirectExecute(
         "UPDATE `pool_template` pt "

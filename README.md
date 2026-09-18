@@ -69,7 +69,7 @@ Copy `mod_gathering_node_dynamic.conf.dist` to your server's `etc/modules` folde
 | `GatheringNodeDynamic.Population.RefreshSeconds` | `60` | Player-count sampling interval. |
 | `GatheringNodeDynamic.Pool.Enable` | `0` | Raise `pool_template.max_limit` on gathering pools. |
 | `GatheringNodeDynamic.Pool.Multiplier` | `1.5` | How much to raise it by. |
-| `GatheringNodeDynamic.Pool.MaxLimitCap` | `0` | Hard ceiling for `max_limit`, `0` = none. |
+| `GatheringNodeDynamic.Pool.MaxLimitCap` | `0` | Hard ceiling for `max_limit`, `0` = none. Never lowers a pool below its stock limit. |
 
 `.reload config` applies everything except the pool settings, which need a worldserver restart.
 
@@ -110,7 +110,8 @@ GatheringNodeDynamic.Pool.Multiplier = 1.5
 ## Notes
 
 - Pool density is capped at the number of spawn points a pool has, so a pool never tries to spawn
-  more nodes than the database defines positions for.
+  more nodes than the database defines positions for. Limits only ever go up: a pool already above
+  `Pool.MaxLimitCap`, such as the Alterac Valley gathering pool, keeps its stock value.
 - The pool pass runs in SQL, where lock data is not reachable, so it matches chest pools whose loot
   contains Metal & Stone (mining) or Herb (herbalism) trade goods. A treasure chest pool that happens
   to loot ore could in principle be matched too; `Pool.MaxLimitCap` keeps any such case bounded.

@@ -148,6 +148,9 @@ GatheringNodeDynamic.Pool.Multiplier = 1.5
 #
 #    GatheringNodeDynamic.Pool.MaxLimitCap
 #        Description: Hard ceiling for max_limit after scaling. 0 = no ceiling.
+#                     A pool whose stock limit is already above the ceiling is
+#                     left alone rather than thinned out; this feature only ever
+#                     adds nodes.
 #        Default:     0
 #
 GatheringNodeDynamic.Pool.MaxLimitCap = 0
