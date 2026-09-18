@@ -1,17 +1,18 @@
 /*
- * Speeds up mining node respawns without editing gameobject.spawntimesecs.
+ * Speeds up gathering node respawns without editing gameobject.spawntimesecs.
  *
- * Every gathering node that enters the world has its respawn delay rescaled from
- * the value stored in its spawn data, so the change applies to pooled and
- * unpooled spawns alike and is re-applied on every respawn. Optionally the
- * multiplier follows the online population, and pool density (how many nodes of
- * a pool are up at the same time) can be raised at startup.
+ * Every mining or herbalism node that enters the world has its respawn delay
+ * rescaled from the value stored in its spawn data, so the change applies to
+ * pooled and unpooled spawns alike and is re-applied on every respawn.
+ * Optionally the multiplier follows the online population, and pool density
+ * (how many nodes of a pool are up at the same time) can be raised at startup.
  */
 
 #include "Config.h"
 #include "DBCStores.h"
 #include "DatabaseEnv.h"
 #include "GameObject.h"
+#include "ItemTemplate.h"
 #include "Log.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
@@ -21,17 +22,17 @@
 #include <atomic>
 #include <cmath>
 #include <string>
-#include <vector>
 
 namespace
 {
-constexpr char const* POOL_BACKUP_TABLE = "mod_mining_node_dynamic_pools";
+constexpr char const* POOL_BACKUP_TABLE = "mod_gathering_node_dynamic_pools";
 constexpr uint32 MIN_RESPAWN_FLOOR = 1; // a delay of 0 means "never respawns"
 
 // Read from map update threads, written from the world thread.
 std::atomic<bool> g_enabled{true};
 std::atomic<bool> g_debug{false};
-std::atomic<bool> g_includeHerbalism{false};
+std::atomic<bool> g_mining{true};
+std::atomic<bool> g_herbalism{true};
 std::atomic<uint32> g_minRespawnSeconds{30};
 std::atomic<uint32> g_maxRespawnSeconds{0};
 std::atomic<float> g_activeMultiplier{1.0f};
@@ -46,9 +47,8 @@ uint32 g_populationRefreshSeconds = 60;
 bool g_poolEnabled = false;
 float g_poolMultiplier = 1.5f;
 uint32 g_poolMaxLimitCap = 0;
-std::string g_poolNamePatterns;
 
-bool IsGatheringNodeLock(uint32 lockId, bool includeHerbalism)
+bool IsGatheringNodeLock(uint32 lockId, bool mining, bool herbalism)
 {
     LockEntry const* lock = sLockStore.LookupEntry(lockId);
     if (!lock)
@@ -59,10 +59,10 @@ bool IsGatheringNodeLock(uint32 lockId, bool includeHerbalism)
         if (lock->Type[i] != LOCK_KEY_SKILL)
             continue;
 
-        if (lock->Index[i] == LOCKTYPE_MINING)
+        if (mining && lock->Index[i] == LOCKTYPE_MINING)
             return true;
 
-        if (includeHerbalism && lock->Index[i] == LOCKTYPE_HERBALISM)
+        if (herbalism && lock->Index[i] == LOCKTYPE_HERBALISM)
             return true;
     }
 
@@ -83,50 +83,25 @@ uint32 ScaleRespawnDelay(uint32 baseSeconds)
     return std::max(result, minSeconds);
 }
 
-std::vector<std::string> SplitPatterns(std::string const& patterns)
+// Nodes are chests looting trade goods: ore and stone for mining, herbs for
+// herbalism. Lock data lives in the DBCs and cannot be reached from SQL, so the
+// pool query identifies gathering pools through their loot instead.
+std::string BuildLootSubclassList()
 {
-    std::vector<std::string> result;
-    std::size_t start = 0;
+    std::string subclasses;
 
-    while (start <= patterns.size())
+    if (g_mining.load())
+        subclasses += std::to_string(uint32(ITEM_SUBCLASS_METAL_STONE));
+
+    if (g_herbalism.load())
     {
-        std::size_t const end = patterns.find(',', start);
-        std::string token = patterns.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!subclasses.empty())
+            subclasses += ",";
 
-        // Config values are trusted-ish, but they still end up inside a LIKE
-        // literal, so strip anything that could break out of the string.
-        token.erase(std::remove_if(token.begin(), token.end(), [](char c)
-        {
-            return c == '\'' || c == '"' || c == '`' || c == '\\' || c == ';';
-        }), token.end());
-
-        std::size_t const first = token.find_first_not_of(" \t");
-        std::size_t const last = token.find_last_not_of(" \t");
-        if (first != std::string::npos)
-            result.push_back(token.substr(first, last - first + 1));
-
-        if (end == std::string::npos)
-            break;
-
-        start = end + 1;
+        subclasses += std::to_string(uint32(ITEM_SUBCLASS_HERB));
     }
 
-    return result;
-}
-
-std::string BuildNameFilter()
-{
-    std::string filter;
-
-    for (std::string const& pattern : SplitPatterns(g_poolNamePatterns))
-    {
-        if (!filter.empty())
-            filter += " OR ";
-
-        filter += "gt.name LIKE '" + pattern + "'";
-    }
-
-    return filter;
+    return subclasses;
 }
 
 bool PoolBackupTableExists()
@@ -168,12 +143,9 @@ void RestorePoolLimits()
 
 void ApplyPoolLimits()
 {
-    std::string const filter = BuildNameFilter();
-    if (filter.empty())
-    {
-        LOG_ERROR("module", "MiningNodeDynamic: MiningNodeDynamic.Pool.NamePatterns is empty, pool density left untouched");
+    std::string const subclasses = BuildLootSubclassList();
+    if (subclasses.empty())
         return;
-    }
 
     WorldDatabase.DirectExecute(
         "INSERT INTO `{}` (pool_entry, original_max_limit) "
@@ -181,7 +153,17 @@ void ApplyPoolLimits()
         "INNER JOIN `pool_gameobject` pg ON pg.pool_entry = pt.entry "
         "INNER JOIN `gameobject` g ON g.guid = pg.guid "
         "INNER JOIN `gameobject_template` gt ON gt.entry = g.id "
-        "WHERE gt.type = {} AND pt.max_limit > 0 AND ({})", POOL_BACKUP_TABLE, uint32(GAMEOBJECT_TYPE_CHEST), filter);
+        "WHERE pt.max_limit > 0 AND gt.type = {} AND gt.data0 > 0 AND ("
+        "EXISTS (SELECT 1 FROM `gameobject_loot_template` glt "
+        "INNER JOIN `item_template` it ON it.entry = glt.Item "
+        "WHERE glt.Entry = gt.data1 AND glt.Reference = 0 AND it.class = {} AND it.subclass IN ({})) "
+        "OR EXISTS (SELECT 1 FROM `gameobject_loot_template` glt "
+        "INNER JOIN `reference_loot_template` rlt ON rlt.Entry = glt.Reference "
+        "INNER JOIN `item_template` it ON it.entry = rlt.Item "
+        "WHERE glt.Entry = gt.data1 AND glt.Reference > 0 AND it.class = {} AND it.subclass IN ({})))",
+        POOL_BACKUP_TABLE, uint32(GAMEOBJECT_TYPE_CHEST),
+        uint32(ITEM_CLASS_TRADE_GOODS), subclasses,
+        uint32(ITEM_CLASS_TRADE_GOODS), subclasses);
 
     // Never go past the number of spawn points the pool actually has.
     std::string limitExpression =
@@ -197,14 +179,14 @@ void ApplyPoolLimits()
         "ON c.pool_entry = pt.entry "
         "SET pt.max_limit = {}", POOL_BACKUP_TABLE, limitExpression);
 
-    LOG_INFO("module", "MiningNodeDynamic: raised max_limit on {} gathering pools (x{:.2f})", CountBackedUpPools(), g_poolMultiplier);
+    LOG_INFO("module", "GatheringNodeDynamic: raised max_limit on {} gathering pools (x{:.2f})", CountBackedUpPools(), g_poolMultiplier);
 }
 }
 
-class MiningNodeDynamicWorldScript : public WorldScript
+class GatheringNodeDynamicWorldScript : public WorldScript
 {
 public:
-    MiningNodeDynamicWorldScript() : WorldScript("MiningNodeDynamicWorldScript", {
+    GatheringNodeDynamicWorldScript() : WorldScript("GatheringNodeDynamicWorldScript", {
         WORLDHOOK_ON_AFTER_CONFIG_LOAD,
         WORLDHOOK_ON_UPDATE
     })
@@ -223,7 +205,7 @@ public:
         if (!reload)
             SyncPoolLimits();
         else if (g_poolEnabled)
-            LOG_INFO("module", "MiningNodeDynamic: pool density is only applied during startup, restart the worldserver to change it");
+            LOG_INFO("module", "GatheringNodeDynamic: pool density is only applied during startup, restart the worldserver to change it");
     }
 
     void OnUpdate(uint32 diff) override
@@ -244,41 +226,44 @@ public:
 private:
     void LoadConfig()
     {
-        g_enabled.store(sConfigMgr->GetOption<bool>("MiningNodeDynamic.Enable", true));
-        g_debug.store(sConfigMgr->GetOption<bool>("MiningNodeDynamic.Debug", false));
-        g_includeHerbalism.store(sConfigMgr->GetOption<bool>("MiningNodeDynamic.IncludeHerbalism", false));
+        g_enabled.store(sConfigMgr->GetOption<bool>("GatheringNodeDynamic.Enable", true));
+        g_debug.store(sConfigMgr->GetOption<bool>("GatheringNodeDynamic.Debug", false));
+        g_mining.store(sConfigMgr->GetOption<bool>("GatheringNodeDynamic.Mining.Enable", true));
+        g_herbalism.store(sConfigMgr->GetOption<bool>("GatheringNodeDynamic.Herbalism.Enable", true));
 
-        g_baseMultiplier = std::max(0.01f, sConfigMgr->GetOption<float>("MiningNodeDynamic.Respawn.Multiplier", 0.5f));
+        if (g_enabled.load() && !g_mining.load() && !g_herbalism.load())
+            LOG_ERROR("module", "GatheringNodeDynamic: both Mining.Enable and Herbalism.Enable are off, nothing will be rescaled");
 
-        uint32 minSeconds = sConfigMgr->GetOption<uint32>("MiningNodeDynamic.Respawn.MinSeconds", 30);
-        uint32 maxSeconds = sConfigMgr->GetOption<uint32>("MiningNodeDynamic.Respawn.MaxSeconds", 0);
+        g_baseMultiplier = std::max(0.01f, sConfigMgr->GetOption<float>("GatheringNodeDynamic.Respawn.Multiplier", 0.5f));
+
+        uint32 minSeconds = sConfigMgr->GetOption<uint32>("GatheringNodeDynamic.Respawn.MinSeconds", 30);
+        uint32 maxSeconds = sConfigMgr->GetOption<uint32>("GatheringNodeDynamic.Respawn.MaxSeconds", 0);
 
         if (maxSeconds && maxSeconds < minSeconds)
         {
-            LOG_ERROR("module", "MiningNodeDynamic: Respawn.MaxSeconds ({}) is below Respawn.MinSeconds ({}), ignoring the maximum", maxSeconds, minSeconds);
+            LOG_ERROR("module", "GatheringNodeDynamic: Respawn.MaxSeconds ({}) is below Respawn.MinSeconds ({}), ignoring the maximum", maxSeconds, minSeconds);
             maxSeconds = 0;
         }
 
         g_minRespawnSeconds.store(minSeconds);
         g_maxRespawnSeconds.store(maxSeconds);
 
-        g_populationEnabled = sConfigMgr->GetOption<bool>("MiningNodeDynamic.Population.Enable", false);
-        g_populationMinPlayers = sConfigMgr->GetOption<uint32>("MiningNodeDynamic.Population.MinPlayers", 10);
-        g_populationMaxPlayers = sConfigMgr->GetOption<uint32>("MiningNodeDynamic.Population.MaxPlayers", 100);
-        g_populationMultiplier = std::max(0.01f, sConfigMgr->GetOption<float>("MiningNodeDynamic.Population.MultiplierAtMaxPlayers", 0.25f));
-        g_populationRefreshSeconds = std::max<uint32>(5, sConfigMgr->GetOption<uint32>("MiningNodeDynamic.Population.RefreshSeconds", 60));
+        g_populationEnabled = sConfigMgr->GetOption<bool>("GatheringNodeDynamic.Population.Enable", false);
+        g_populationMinPlayers = sConfigMgr->GetOption<uint32>("GatheringNodeDynamic.Population.MinPlayers", 10);
+        g_populationMaxPlayers = sConfigMgr->GetOption<uint32>("GatheringNodeDynamic.Population.MaxPlayers", 100);
+        g_populationMultiplier = std::max(0.01f, sConfigMgr->GetOption<float>("GatheringNodeDynamic.Population.MultiplierAtMaxPlayers", 0.25f));
+        g_populationRefreshSeconds = std::max<uint32>(5, sConfigMgr->GetOption<uint32>("GatheringNodeDynamic.Population.RefreshSeconds", 60));
 
         if (g_populationEnabled && g_populationMaxPlayers <= g_populationMinPlayers)
         {
-            LOG_ERROR("module", "MiningNodeDynamic: Population.MaxPlayers ({}) must be above Population.MinPlayers ({}), population scaling disabled",
+            LOG_ERROR("module", "GatheringNodeDynamic: Population.MaxPlayers ({}) must be above Population.MinPlayers ({}), population scaling disabled",
                 g_populationMaxPlayers, g_populationMinPlayers);
             g_populationEnabled = false;
         }
 
-        g_poolEnabled = sConfigMgr->GetOption<bool>("MiningNodeDynamic.Pool.Enable", false);
-        g_poolMultiplier = std::max(1.0f, sConfigMgr->GetOption<float>("MiningNodeDynamic.Pool.Multiplier", 1.5f));
-        g_poolMaxLimitCap = sConfigMgr->GetOption<uint32>("MiningNodeDynamic.Pool.MaxLimitCap", 0);
-        g_poolNamePatterns = sConfigMgr->GetOption<std::string>("MiningNodeDynamic.Pool.NamePatterns", "%Vein%,%Deposit%,%Obsidian Chunk%");
+        g_poolEnabled = sConfigMgr->GetOption<bool>("GatheringNodeDynamic.Pool.Enable", false);
+        g_poolMultiplier = std::max(1.0f, sConfigMgr->GetOption<float>("GatheringNodeDynamic.Pool.Multiplier", 1.5f));
+        g_poolMaxLimitCap = sConfigMgr->GetOption<uint32>("GatheringNodeDynamic.Pool.MaxLimitCap", 0);
     }
 
     void RefreshMultiplier()
@@ -304,18 +289,18 @@ private:
         float const previous = g_activeMultiplier.exchange(multiplier);
 
         if (g_debug.load() && std::fabs(previous - multiplier) > 0.001f)
-            LOG_INFO("module", "MiningNodeDynamic: respawn multiplier is now {:.2f} ({} players online)", multiplier, sWorldSessionMgr->GetPlayerCount());
+            LOG_INFO("module", "GatheringNodeDynamic: respawn multiplier is now {:.2f} ({} players online)", multiplier, sWorldSessionMgr->GetPlayerCount());
     }
 
     void SyncPoolLimits()
     {
-        if (!g_poolEnabled)
+        if (!g_poolEnabled || !g_enabled.load())
         {
             // Only touch the DB when a previous run left raised limits behind.
             if (PoolBackupTableExists() && CountBackedUpPools())
             {
                 RestorePoolLimits();
-                LOG_INFO("module", "MiningNodeDynamic: pool density disabled, original pool_template.max_limit values restored");
+                LOG_INFO("module", "GatheringNodeDynamic: pool density disabled, original pool_template.max_limit values restored");
             }
 
             return;
@@ -329,10 +314,10 @@ private:
     uint32 _refreshTimerMs = 0;
 };
 
-class MiningNodeDynamicGameObjectScript : public AllGameObjectScript
+class GatheringNodeDynamicGameObjectScript : public AllGameObjectScript
 {
 public:
-    MiningNodeDynamicGameObjectScript() : AllGameObjectScript("MiningNodeDynamicGameObjectScript") { }
+    GatheringNodeDynamicGameObjectScript() : AllGameObjectScript("GatheringNodeDynamicGameObjectScript") { }
 
     void OnGameObjectAddWorld(GameObject* go) override
     {
@@ -346,7 +331,10 @@ public:
             return;
 
         GameObjectTemplate const* goInfo = go->GetGOInfo();
-        if (!goInfo || !IsGatheringNodeLock(goInfo->GetLockId(), g_includeHerbalism.load(std::memory_order_relaxed)))
+        if (!goInfo)
+            return;
+
+        if (!IsGatheringNodeLock(goInfo->GetLockId(), g_mining.load(std::memory_order_relaxed), g_herbalism.load(std::memory_order_relaxed)))
             return;
 
         // Scale from the spawn data rather than the live delay: the same object
@@ -370,12 +358,12 @@ public:
         go->SetRespawnDelay(static_cast<int32>(newDelay));
 
         if (g_debug.load(std::memory_order_relaxed))
-            LOG_INFO("module", "MiningNodeDynamic: node {} (guid {}) respawn {}s -> {}s", goInfo->entry, go->GetSpawnId(), baseDelay, newDelay);
+            LOG_INFO("module", "GatheringNodeDynamic: node {} (guid {}) respawn {}s -> {}s", goInfo->entry, go->GetSpawnId(), baseDelay, newDelay);
     }
 };
 
-void AddMiningNodeDynamicScripts()
+void AddGatheringNodeDynamicScripts()
 {
-    new MiningNodeDynamicWorldScript();
-    new MiningNodeDynamicGameObjectScript();
+    new GatheringNodeDynamicWorldScript();
+    new GatheringNodeDynamicGameObjectScript();
 }
