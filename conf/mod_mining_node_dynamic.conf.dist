@@ -1,0 +1,156 @@
+[worldserver]
+
+#
+# Mining Node Dynamic
+#
+# Rescales the respawn timer of mining nodes instead of editing
+# gameobject.spawntimesecs, so the change survives DB updates and can be tuned
+# without a restart. Nodes already sitting in the world keep their current timer
+# until they are next mined.
+#
+
+#
+#    MiningNodeDynamic.Enable
+#        Description: Master switch. 0 leaves every node at its database timer.
+#        Default:     1
+#
+MiningNodeDynamic.Enable = 1
+
+#
+#    MiningNodeDynamic.Debug
+#        Description: Logs every rescaled node and every multiplier change.
+#        Default:     0
+#
+MiningNodeDynamic.Debug = 0
+
+#
+#    MiningNodeDynamic.IncludeHerbalism
+#        Description: 0 = mining nodes only.
+#                     1 = herbalism nodes are rescaled the same way.
+#        Default:     0
+#
+MiningNodeDynamic.IncludeHerbalism = 0
+
+#
+#    MiningNodeDynamic.Respawn.Multiplier
+#        Description: Multiplies the node's database respawn time.
+#                     0.5 = twice as fast, 0.25 = four times as fast,
+#                     1.0 = unchanged.
+#        Default:     0.5
+#
+MiningNodeDynamic.Respawn.Multiplier = 0.5
+
+#
+#    MiningNodeDynamic.Respawn.MinSeconds
+#        Description: Respawn timers are never scaled below this value.
+#                     Values under 1 are treated as 1, since a delay of 0 means
+#                     "never respawns" in the core.
+#        Default:     30
+#
+MiningNodeDynamic.Respawn.MinSeconds = 30
+
+#
+#    MiningNodeDynamic.Respawn.MaxSeconds
+#        Description: Caps the respawn timer of a node. Useful to pull down the
+#                     handful of nodes with very long database timers.
+#                     0 = no cap.
+#        Default:     0
+#
+MiningNodeDynamic.Respawn.MaxSeconds = 0
+
+#
+# Population scaling
+#
+# Makes the multiplier follow the number of players online, so a busy server
+# respawns nodes faster than an empty one. The new multiplier applies to nodes
+# as they respawn.
+#
+
+#
+#    MiningNodeDynamic.Population.Enable
+#        Description: 0 = always use Respawn.Multiplier.
+#                     1 = interpolate between Respawn.Multiplier and
+#                         Population.MultiplierAtMaxPlayers.
+#        Default:     0
+#
+MiningNodeDynamic.Population.Enable = 0
+
+#
+#    MiningNodeDynamic.Population.MinPlayers
+#        Description: At or below this player count, Respawn.Multiplier is used.
+#        Default:     10
+#
+MiningNodeDynamic.Population.MinPlayers = 10
+
+#
+#    MiningNodeDynamic.Population.MaxPlayers
+#        Description: At or above this player count,
+#                     Population.MultiplierAtMaxPlayers is used.
+#                     Must be higher than Population.MinPlayers.
+#        Default:     100
+#
+MiningNodeDynamic.Population.MaxPlayers = 100
+
+#
+#    MiningNodeDynamic.Population.MultiplierAtMaxPlayers
+#        Description: Multiplier used once the server is at MaxPlayers.
+#        Default:     0.25
+#
+MiningNodeDynamic.Population.MultiplierAtMaxPlayers = 0.25
+
+#
+#    MiningNodeDynamic.Population.RefreshSeconds
+#        Description: How often the player count is sampled. Minimum 5.
+#        Default:     60
+#
+MiningNodeDynamic.Population.RefreshSeconds = 60
+
+#
+# Pool density (optional, writes to the world database)
+#
+# Most gathering nodes live in spawn pools: a zone has many spawn points but
+# only pool_template.max_limit of them are up at once. Raising that limit puts
+# more nodes on the map at the same time, which the respawn timer alone cannot
+# do. The module backs up the original max_limit values in
+# mod_mining_node_dynamic_pools and restores them when this is turned off, so
+# changing the multiplier never compounds.
+#
+# Applied during startup only; a config reload will not change it.
+#
+
+#
+#    MiningNodeDynamic.Pool.Enable
+#        Description: 0 = leave pool_template alone and restore any values this
+#                         module previously changed.
+#                     1 = raise max_limit on gathering pools.
+#        Default:     0
+#
+MiningNodeDynamic.Pool.Enable = 0
+
+#
+#    MiningNodeDynamic.Pool.Multiplier
+#        Description: Multiplies pool_template.max_limit. Values below 1.0 are
+#                     clamped to 1.0. The result is never higher than the number
+#                     of spawn points the pool actually has.
+#        Default:     1.5
+#
+MiningNodeDynamic.Pool.Multiplier = 1.5
+
+#
+#    MiningNodeDynamic.Pool.MaxLimitCap
+#        Description: Hard ceiling for max_limit after scaling. 0 = no ceiling.
+#        Default:     0
+#
+MiningNodeDynamic.Pool.MaxLimitCap = 0
+
+#
+#    MiningNodeDynamic.Pool.NamePatterns
+#        Description: Comma separated SQL LIKE patterns matched against
+#                     gameobject_template.name to decide which chest pools are
+#                     gathering pools. Lock data lives in the DBCs, so the pool
+#                     query has to go by name.
+#                     Add "%Herb%" style patterns here if you want herb pools
+#                     included as well.
+#        Default:     "%Vein%,%Deposit%,%Obsidian Chunk%"
+#
+MiningNodeDynamic.Pool.NamePatterns = "%Vein%,%Deposit%,%Obsidian Chunk%"
