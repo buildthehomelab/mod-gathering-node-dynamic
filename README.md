@@ -36,6 +36,15 @@ turned off or the multiplier changes.
 
 ---
 
+## Requirements
+
+- AzerothCore wotlk (master). No other module is needed.
+- Nothing on the client side: no patch and no addon.
+- The pool density option edits `pool_template` in the world database at startup, so the world
+  database user needs write access to it (the normal AzerothCore setup).
+
+---
+
 ## Installation
 
 ```bash
@@ -120,6 +129,28 @@ GatheringNodeDynamic.Pool.Multiplier = 1.5
 
 ---
 
+## Troubleshooting
+
+- **Nodes already in the world still use the old timer.** Changing the config only affects a node
+  the next time it is gathered. `.reload config` applies the respawn settings; pool settings need a
+  worldserver restart.
+- **Respawns are not as fast as the multiplier suggests.** `GatheringNodeDynamic.Respawn.MinSeconds`
+  is a floor (30 by default) and `Respawn.MaxSeconds` a ceiling. Mining and herbalism are switched
+  separately, so check `Mining.Enable` and `Herbalism.Enable` as well.
+- **More nodes are not up after turning on `Pool.Enable`.** The pool limit is written while the
+  server boots, so restart the worldserver. A pool never goes above its number of spawn points, or
+  above `Pool.MaxLimitCap` if you set one.
+- **Want the original pool limits back.** Set `Pool.Enable = 0` and restart; the saved limits in
+  `mod_gathering_node_dynamic_pools` are restored.
+
+---
+
+## Credits
+
+Author: [buildthehomelab](https://github.com/buildthehomelab)
+
+---
+
 ## License
 
-Released under the GNU AGPL v3, matching AzerothCore.
+Released under the GNU AGPL v3, matching AzerothCore. See [LICENSE](LICENSE).
