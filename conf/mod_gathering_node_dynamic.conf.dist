@@ -125,6 +125,7 @@ GatheringNodeDynamic.Population.RefreshSeconds = 60
 # (pool_pool). Only the mother pool is raised, so more spots are up but each
 # spot still shows one node. A pool with a spawn point on a spot that another
 # spawn point also uses, in the same pool or another one, keeps its stock limit.
+# Every pooled object counts here, including nodes of a profession switched off.
 #
 # The module backs up the original max_limit values in
 # mod_gathering_node_dynamic_pools and restores them when this is turned off, so

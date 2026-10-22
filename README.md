@@ -45,7 +45,8 @@ are up:
   put two node types on the same spot.
 
 A pool with a spawn point within 3 yards of a point on another spot, in the same pool or in a
-different one, keeps its stock limit, since raising it could still stack two nodes there.
+different one, keeps its stock limit, since raising it could still stack two nodes there. Every pooled
+object counts for this check, including chests and nodes of a profession that is switched off.
 
 ---
 

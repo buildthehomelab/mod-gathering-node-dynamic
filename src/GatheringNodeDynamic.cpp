@@ -244,7 +244,7 @@ PoolTables LoadPoolTables(std::string const& subclasses)
         "OR EXISTS (SELECT 1 FROM `gameobject_loot_template` glt "
         "INNER JOIN `reference_loot_template` rlt ON rlt.Entry = glt.Reference "
         "INNER JOIN `item_template` it ON it.entry = rlt.Item "
-        "WHERE glt.Entry = gt.data1 AND glt.Reference > 0 AND it.class = {} AND it.subclass IN ({}))) "
+        "WHERE glt.Entry = gt.data1 AND glt.Reference > 0 AND rlt.Reference = 0 AND it.class = {} AND it.subclass IN ({}))) "
         // Treasure chests can loot ore or herbs too, but nodes never loot gear.
         "AND NOT EXISTS (SELECT 1 FROM `gameobject_loot_template` glt "
         "INNER JOIN `item_template` it ON it.entry = glt.Item "
@@ -252,7 +252,7 @@ PoolTables LoadPoolTables(std::string const& subclasses)
         "AND NOT EXISTS (SELECT 1 FROM `gameobject_loot_template` glt "
         "INNER JOIN `reference_loot_template` rlt ON rlt.Entry = glt.Reference "
         "INNER JOIN `item_template` it ON it.entry = rlt.Item "
-        "WHERE glt.Entry = gt.data1 AND glt.Reference > 0 AND it.class IN ({}, {}))",
+        "WHERE glt.Entry = gt.data1 AND glt.Reference > 0 AND rlt.Reference = 0 AND it.class IN ({}, {}))",
         uint32(GAMEOBJECT_TYPE_CHEST),
         uint32(ITEM_CLASS_TRADE_GOODS), subclasses,
         uint32(ITEM_CLASS_TRADE_GOODS), subclasses,
@@ -364,8 +364,16 @@ void ApplyPoolLimits()
 
     PoolTables const tables = LoadPoolTables(subclasses);
 
-    std::vector<uint32> topPools;
+    // Pools that may be raised: the top pools of the gathering pools.
+    std::unordered_set<uint32> gatheringTopPools;
     for (uint32 poolId : tables.gathering)
+        if (uint32 topPool = FindTopPool(tables, poolId))
+            gatheringTopPools.insert(topPool);
+
+    // Pools whose spots are checked: the top pools of every pool of gameobjects,
+    // so nodes of a profession that is switched off, and chests, still count.
+    std::vector<uint32> topPools;
+    for (auto const& [poolId, poolPoints] : tables.points)
         if (uint32 topPool = FindTopPool(tables, poolId))
             topPools.push_back(topPool);
 
@@ -421,6 +429,9 @@ void ApplyPoolLimits()
             for (SpawnPoint const& point : pointItr->second)
                 points.push_back({ point, poolId, spots++ });
         }
+
+        if (!gatheringTopPools.count(poolId))
+            continue;
 
         auto limitItr = tables.maxLimit.find(poolId);
         if (limitItr == tables.maxLimit.end() || !limitItr->second)
