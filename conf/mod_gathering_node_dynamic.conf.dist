@@ -120,6 +120,13 @@ GatheringNodeDynamic.Population.RefreshSeconds = 60
 # do. Pools are matched through their loot, and follow the Mining.Enable and
 # Herbalism.Enable switches above.
 #
+# Where a spot can hold several node types (Tin or Silver, Lichbloom or
+# Icethorn), the database keeps one child pool per spot inside a mother pool
+# (pool_pool). Only the mother pool is raised, so more spots are up but each
+# spot still shows one node. A pool with a spawn point on a spot that another
+# spawn point also uses, in the same pool or another one, keeps its stock limit.
+# Every pooled object counts here, including nodes of a profession switched off.
+#
 # The module backs up the original max_limit values in
 # mod_gathering_node_dynamic_pools and restores them when this is turned off, so
 # changing the multiplier never compounds.
@@ -140,7 +147,7 @@ GatheringNodeDynamic.Pool.Enable = 0
 #    GatheringNodeDynamic.Pool.Multiplier
 #        Description: Multiplies pool_template.max_limit. Values below 1.0 are
 #                     clamped to 1.0. The result is never higher than the number
-#                     of spawn points the pool actually has.
+#                     of spots the pool actually has.
 #        Default:     1.5
 #
 GatheringNodeDynamic.Pool.Multiplier = 1.5

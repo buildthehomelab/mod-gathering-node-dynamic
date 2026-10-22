@@ -34,6 +34,20 @@ setter, so that part is written to the world database while the server boots, be
 original limits are saved in `mod_gathering_node_dynamic_pools` and restored when the feature is
 turned off or the multiplier changes.
 
+Gathering pools come in two shapes, and the module raises only the pool that decides how many spots
+are up:
+
+- A plain pool lists one node per spawn point, and its `max_limit` says how many are up. That pool is
+  raised.
+- Where a spot can hold several node types (Tin or Silver, Lichbloom or Icethorn), the database keeps
+  one child pool per spot with `max_limit` 1, inside a mother pool in `pool_pool`. The mother pool is
+  raised, so more spots are up, while each child pool stays at one node. Raising a child pool would
+  put two node types on the same spot.
+
+A pool with a spawn point within 3 yards of a point on another spot, in the same pool or in a
+different one, keeps its stock limit, since raising it could still stack two nodes there. Every pooled
+object counts for this check, including chests and nodes of a profession that is switched off.
+
 ---
 
 ## Requirements
@@ -118,14 +132,20 @@ GatheringNodeDynamic.Pool.Multiplier = 1.5
 
 ## Notes
 
-- Pool density is capped at the number of spawn points a pool has, so a pool never tries to spawn
-  more nodes than the database defines positions for. Limits only ever go up: a pool already above
+- Pool density is capped at the number of spots a pool has (spawn points for a plain pool, child
+  pools for a mother pool), so a pool never tries to spawn more nodes than the database defines
+  positions for. Limits only ever go up: a pool already above
   `Pool.MaxLimitCap`, such as the Alterac Valley gathering pool, keeps its stock value.
-- The pool pass runs in SQL, where lock data is not reachable, so it matches chest pools whose loot
-  contains Metal & Stone (mining) or Herb (herbalism) trade goods. A treasure chest pool that happens
-  to loot ore could in principle be matched too; `Pool.MaxLimitCap` keeps any such case bounded.
+- The pool pass runs while the server boots, before `Lock.dbc` is loaded, so it can't use lock data.
+  It matches chest pools whose loot contains Metal & Stone (mining) or Herb (herbalism) trade goods
+  and no weapons or armor, which leaves out treasure chests such as Battered Chest and Solid Chest.
 - To revert the pool changes, set `GatheringNodeDynamic.Pool.Enable = 0` and restart; the module puts
-  the saved `max_limit` values back. The respawn side leaves no trace at all.
+  the saved `max_limit` values back. The respawn side leaves no trace at all. To remove the module
+  while pool density is still on, run `data/sql/uninstall/mod_gathering_node_dynamic_uninstall_world.sql`
+  on the world database by hand.
+- Earlier builds also raised the per-spot child pools, which stacked two node types on one spot. The
+  first restart on a build with this fix restores those from the backup table, so nothing has to be
+  cleaned up by hand.
 
 ---
 
